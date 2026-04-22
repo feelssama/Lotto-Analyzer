@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#080d1a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="로또AI" />
+  <title>🎱 로또 AI 분석기</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #080d1a; }
+    body { font-family: 'Noto Sans KR', sans-serif; overflow-x: hidden; }
+    #root { min-height: 100vh; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse { 0%,100% { box-shadow: 0 4px 24px #f7c94855; } 50% { box-shadow: 0 4px 36px #f7c948aa; } }
+    button:active { transform: scale(0.97) !important; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: #0d1528; }
+    ::-webkit-scrollbar-thumb { background: #2d3f5a; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // ─────────────────────────────────────────────
+    // 1~1220회 누적 빈도 데이터 (2026.04.18 기준)
+    // ─────────────────────────────────────────────
+    const FREQ = {
+      1:200,2:190,3:202,4:194,5:178,6:197,7:200,8:180,9:158,
+      10:189,11:190,12:204,13:202,14:193,15:192,16:195,17:202,
+      18:191,19:189,20:197,21:190,22:162,23:168,24:197,25:174,
+      26:195,27:211,28:179,29:170,30:188,31:198,32:176,33:204,
+      34:205,35:191,36:186,37:197,38:199,39:191,40:194,41:165,
+      42:179,43:198,44:185,45:195
+    };
+
+    // 최근 15회차 당첨번호
+    const RECENT = [
+      [2,22,25,28,34,43],[1,2,15,28,39,45],[3,28,31,32,42,45],
+      [8,10,15,20,29,31],[3,10,14,15,23,24],[13,15,19,21,44,45],
+      [10,15,19,27,30,33],[5,11,25,27,36,38],[5,8,25,31,41,44],
+      [23,26,27,35,38,40],[1,7,9,17,27,38],[2,17,20,35,37,39],
+      [6,27,30,36,38,42],[10,22,24,27,38,45],[1,3,17,26,27,42]
+    ];
+
+    const getBallColor = (n) => {
+      if (n <= 10) return { bg:"#f7c948", text:"#1a1a1a", shadow:"#c9960a" };
+      if (n <= 20) return { bg:"#4f9cf9", text:"#fff",    shadow:"#1a5cbf" };
+      if (n <= 30) return { bg:"#f05252", text:"#fff",    shadow:"#b01c1c" };
+      if (n <= 40) return { bg:"#8b96a8", text:"#fff",    shadow:"#4a5568" };
+                   return { bg:"#4cba6e", text:"#fff",    shadow:"#1d7a3e" };
+    };
+
+    const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
+    const pick    = (arr, n) => shuffle(arr).slice(0, n).sort((a,b)=>a-b);
+
+    // ─────────────────────────────────────────────
+    // 번호 생성 로직
+    // ─────────────────────────────────────────────
+    function generateNumbers() {
+      const sorted   = Object.entries(FREQ).sort((a,b)=>b[1]-a[1]);
+      const hotNums  = sorted.slice(0,12).map(([n])=>+n);
+      const coldNums = sorted.slice(-12).map(([n])=>+n);
+      const midNums  = sorted.slice(12,33).map(([n])=>+n);
+
+      // A: HOT
+      const makeA = () => {
+        for(let i=0;i<100;i++){
+          const s = pick(hotNums,6);
+          const o = s.filter(n=>n%2!==0).length;
+          if(o>=2&&o<=4) return s;
+        }
+        return hotNums.slice(0,6).sort((a,b)=>a-b);
+      };
+
+      // B: COLD
+      const makeB = () => {
+        for(let i=0;i<100;i++){
+          const s = pick(coldNums,6);
+          const o = s.filter(n=>n%2!==0).length;
+          if(o>=2&&o<=4) return s;
+        }
+        return coldNums.slice(0,6).sort((a,b)=>a-b);
+      };
+
+      // C: AI 혼합
+      const makeC = () => {
+        for(let i=0;i<200;i++){
+          const s = [...pick(hotNums,2),...pick(midNums,2),...pick(coldNums,2)].sort((a,b)=>a-b);
+          const u = [...new Set(s)];
+          if(u.length<6) continue;
+          const o   = u.filter(n=>n%2!==0).length;
+          const sum = u.reduce((a,b)=>a+b,0);
+          if(o>=2&&o<=4&&sum>=100&&sum<=180) return u;
+        }
+        return [9,15,17,22,27,38];
+      };
+
+      // D: 연속번호 2쌍
+      const makeD = () => {
+        const all = Array.from({length:45},(_,i)=>i+1);
+        for(let i=0;i<300;i++){
+          const p1s = Math.floor(Math.random()*43)+1;
+          const p2s = Math.floor(Math.random()*43)+1;
+          if(Math.abs(p1s-p2s)<=2) continue;
+          const pair1=[p1s,p1s+1], pair2=[p2s,p2s+1];
+          const used=new Set([...pair1,...pair2]);
+          const remain=all.filter(n=>!used.has(n));
+          const extra=pick(remain,2);
+          if(extra.some(n=>used.has(n-1)||used.has(n+1))) continue;
+          const result=[...pair1,...pair2,...extra].sort((a,b)=>a-b);
+          if([...new Set(result)].length<6) continue;
+          const o=result.filter(n=>n%2!==0).length;
+          const sum=result.reduce((a,b)=>a+b,0);
+          if(o>=2&&o<=4&&sum>=90&&sum<=170) return result;
+        }
+        return [11,12,24,25,33,41];
+      };
+
+      // E: 뒷번호 편중
+      const makeE = () => {
+        const high=Array.from({length:23},(_,i)=>i+23);
+        const low =Array.from({length:22},(_,i)=>i+1);
+        for(let i=0;i<300;i++){
+          const result=[...pick(high,4),...pick(low,2)].sort((a,b)=>a-b);
+          const u=[...new Set(result)];
+          if(u.length<6) continue;
+          const o=u.filter(n=>n%2!==0).length;
+          const sum=u.reduce((a,b)=>a+b,0);
+          if(o>=2&&o<=4&&sum>=150&&sum<=210) return u;
+        }
+        return [3,23,34,37,40,44];
+      };
+
+      return { A:makeA(), B:makeB(), C:makeC(), D:makeD(), E:makeE() };
+    }
+
+    // ─────────────────────────────────────────────
+    // 메타 정보
+    // ─────────────────────────────────────────────
+    const META = {
+      A:{ label:"HOT 빈도형",     icon:"🔥", color:"#f7c948", strategy:"1~1220회 누적 상위 12개에서 홀짝 균형 선별" },
+      B:{ label:"COLD 역발상형",  icon:"❄️", color:"#4f9cf9", strategy:"오랫동안 안 나온 번호 — 이제 나올 차례?" },
+      C:{ label:"AI 혼합형",      icon:"⭐", color:"#a78bfa", strategy:"HOT·MID·COLD 2개씩, 합계 100~180 필터링" },
+      D:{ label:"연속번호 패턴형", icon:"🔗", color:"#4cba6e", strategy:"연속번호 2쌍 포함, 최근 미등장 사이클 반영" },
+      E:{ label:"뒷번호 편중형",  icon:"📈", color:"#f05252", strategy:"23번 이상 4개 집중, 합계 150~210 범위" },
+    };
+
+    // ─────────────────────────────────────────────
+    // Ball 컴포넌트
+    // ─────────────────────────────────────────────
+    function Ball({ num, delay=0, size=44 }) {
+      const [vis, setVis] = useState(false);
+      const c = getBallColor(num);
+      useEffect(() => {
+        const t = setTimeout(() => setVis(true), delay);
+        return () => clearTimeout(t);
+      }, [num, delay]);
+      return (
+        <div style={{
+          width:size, height:size, borderRadius:"50%",
+          background:`radial-gradient(circle at 35% 35%, ${c.bg}ee, ${c.shadow})`,
+          color:c.text, fontWeight:800, fontSize:size*0.38,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          boxShadow:`0 4px 12px ${c.shadow}88, inset 0 1px 3px #ffffff44`,
+          transform: vis ? "scale(1) translateY(0)" : "scale(0.3) translateY(24px)",
+          opacity: vis ? 1 : 0,
+          transition:`all 0.45s cubic-bezier(0.34,1.56,0.64,1) ${delay}ms`,
+          flexShrink:0, userSelect:"none",
+        }}>{num}</div>
+      );
+    }
+
+    // ─────────────────────────────────────────────
+    // ComboCard 컴포넌트
+    // ─────────────────────────────────────────────
+    function ComboCard({ id, nums, animKey }) {
+      const m    = META[id];
+      const sum  = nums.reduce((a,b)=>a+b,0);
+      const odds = nums.filter(n=>n%2!==0).length;
+      let consec = 0;
+      for(let i=0;i<nums.length-1;i++) if(nums[i+1]-nums[i]===1) consec++;
+      const ranges = [
+        nums.filter(n=>n<=10).length,
+        nums.filter(n=>n>=11&&n<=20).length,
+        nums.filter(n=>n>=21&&n<=30).length,
+        nums.filter(n=>n>=31&&n<=40).length,
+        nums.filter(n=>n>=41).length,
+      ];
+      const rangeDefs = [
+        {label:"1-10", color:"#f7c948"},
+        {label:"11-20",color:"#4f9cf9"},
+        {label:"21-30",color:"#f05252"},
+        {label:"31-40",color:"#8b96a8"},
+        {label:"41-45",color:"#4cba6e"},
+      ];
+
+      return (
+        <div style={{
+          background:"linear-gradient(135deg,#1a1f2e 0%,#14192a 100%)",
+          border:`1px solid ${m.color}33`,
+          borderRadius:16, padding:"18px 20px",
+          boxShadow:`0 0 30px ${m.color}12, 0 4px 20px #00000060`,
+          position:"relative", overflow:"hidden",
+          animation:"fadeIn 0.4s ease forwards",
+        }}>
+          {/* glow */}
+          <div style={{
+            position:"absolute", top:-40, right:-40, width:120, height:120,
+            borderRadius:"50%", background:`${m.color}15`, filter:"blur(30px)",
+            pointerEvents:"none",
+          }}/>
+
+          {/* 헤더 */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+            <div style={{
+              background:`${m.color}22`, border:`1px solid ${m.color}55`,
+              borderRadius:7, padding:"3px 9px",
+              fontSize:11, fontWeight:700, color:m.color, letterSpacing:1,
+            }}>조합 {id}</div>
+            <span style={{ fontSize:17 }}>{m.icon}</span>
+            <span style={{ color:"#e2e8f0", fontWeight:700, fontSize:13 }}>{m.label}</span>
+          </div>
+
+          {/* 볼 */}
+          <div style={{ display:"flex", gap:7, marginBottom:14, flexWrap:"wrap" }}>
+            {nums.map((n,i) => (
+              <Ball key={`${animKey}-${n}-${i}`} num={n} delay={i*80} />
+            ))}
+          </div>
+
+          {/* 통계 배지 */}
+          <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:12 }}>
+            {[
+              {t:`합계 ${sum}`, c:"#94a3b8"},
+              {t:`홀${odds}:짝${6-odds}`, c:odds===3||odds===4?"#4cba6e":"#f7c948"},
+              {t:`연속 ${consec}쌍`, c:consec>=2?"#a78bfa":"#374151"},
+            ].map(b=>(
+              <span key={b.t} style={{
+                background:"#0c1020", border:"1px solid #1e2a3a",
+                borderRadius:5, padding:"2px 8px",
+                fontSize:11, fontWeight:600, color:b.c,
+              }}>{b.t}</span>
+            ))}
+          </div>
+
+          {/* 구간 분포 */}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:10, color:"#475569", marginBottom:5, letterSpacing:0.5 }}>번호 구간 분포</div>
+            <div style={{ display:"flex", gap:3 }}>
+              {rangeDefs.map((r,i)=>(
+                <div key={r.label} style={{ flex:1, textAlign:"center" }}>
+                  <div style={{
+                    height:22, borderRadius:4,
+                    background: ranges[i]>0 ? `${r.color}2a` : "#151c2c",
+                    border:`1px solid ${ranges[i]>0?r.color+"55":"#1e2535"}`,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:12, fontWeight:700,
+                    color: ranges[i]>0 ? r.color : "transparent",
+                  }}>{ranges[i]||""}</div>
+                  <div style={{ fontSize:9, color:"#374151", marginTop:2 }}>{r.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 전략 */}
+          <div style={{
+            background:"#0a0f1e", borderRadius:8, padding:"8px 11px",
+            borderLeft:`3px solid ${m.color}77`,
+          }}>
+            <div style={{ fontSize:10, color:"#475569", marginBottom:2 }}>선정 근거</div>
+            <div style={{ fontSize:11, color:"#8899a6", lineHeight:1.65 }}>{m.strategy}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─────────────────────────────────────────────
+    // StatPanel
+    // ─────────────────────────────────────────────
+    function StatPanel() {
+      const sorted = Object.entries(FREQ).sort((a,b)=>b[1]-a[1]);
+      const top5   = sorted.slice(0,5);
+      const bot5   = sorted.slice(-5).reverse();
+      const sections = [
+        {title:"🔥 최다 출현 TOP 5", data:top5, color:"#f7c948"},
+        {title:"❄️ 최소 출현 BOTTOM 5", data:bot5, color:"#4f9cf9"},
+      ];
+      return (
+        <div style={{
+          background:"#0f1420", border:"1px solid #1a2537",
+          borderRadius:12, padding:"16px", display:"flex", flexDirection:"column", gap:18,
+        }}>
+          {sections.map(s=>(
+            <div key={s.title}>
+              <div style={{ fontSize:12, fontWeight:700, color:s.color, marginBottom:10 }}>{s.title}</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {s.data.map(([n,cnt])=>{
+                  const c=getBallColor(+n);
+                  const pct=((cnt-150)/(211-150))*100;
+                  return (
+                    <div key={n} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{
+                        width:30, height:30, borderRadius:"50%",
+                        background:`radial-gradient(circle at 35% 35%,${c.bg}ee,${c.shadow})`,
+                        color:c.text, fontWeight:800, fontSize:12,
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        boxShadow:`0 2px 6px ${c.shadow}66`, flexShrink:0,
+                      }}>{n}</div>
+                      <div style={{ flex:1, background:"#1a2035", borderRadius:4, height:8, overflow:"hidden" }}>
+                        <div style={{
+                          width:`${Math.max(5,pct)}%`, height:"100%",
+                          background:`${s.color}88`, borderRadius:4,
+                        }}/>
+                      </div>
+                      <div style={{ fontSize:11, color:"#475569", width:32, textAlign:"right" }}>{cnt}회</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ─────────────────────────────────────────────
+    // PatternPanel
+    // ─────────────────────────────────────────────
+    function PatternPanel() {
+      const analysis = RECENT.slice(0,8).map((nums, i) => {
+        const sum   = nums.reduce((a,b)=>a+b,0);
+        const high  = nums.filter(n=>n>=23).length;
+        let consec  = 0;
+        for(let j=0;j<nums.length-1;j++) if(nums[j+1]-nums[j]===1) consec++;
+        let type="균형형";
+        if(high>=4) type="뒷번호편중";
+        else if(high<=1) type="앞번호편중";
+        else if(consec>=2) type="연속번호형";
+        const typeColor = type==="뒷번호편중"?"#f05252":type==="앞번호편중"?"#4f9cf9":type==="연속번호형"?"#4cba6e":"#64748b";
+        return { nums, sum, type, typeColor, round:1220-i };
+      });
+      return (
+        <div style={{
+          background:"#0f1420", border:"1px solid #1a2537",
+          borderRadius:12, padding:"16px",
+        }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#475569", marginBottom:12, letterSpacing:0.8 }}>
+            📊 최근 8회차 패턴 흐름
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+            {analysis.map((a,i)=>(
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:7 }}>
+                <div style={{ fontSize:10, color:"#374151", width:36, flexShrink:0 }}>{a.round}회</div>
+                <div style={{ display:"flex", gap:3, flex:1 }}>
+                  {a.nums.map((n,j)=>{
+                    const c=getBallColor(n);
+                    return (
+                      <div key={j} style={{
+                        width:26, height:26, borderRadius:"50%",
+                        background:`radial-gradient(circle at 35% 35%,${c.bg}cc,${c.shadow})`,
+                        color:c.text, fontWeight:800, fontSize:10,
+                        display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+                      }}>{n}</div>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize:10, color:"#374151", width:30, flexShrink:0 }}>합{a.sum}</div>
+                <div style={{
+                  fontSize:9, fontWeight:700, color:a.typeColor,
+                  background:`${a.typeColor}1a`, borderRadius:4, padding:"2px 5px",
+                  whiteSpace:"nowrap", flexShrink:0,
+                }}>{a.type}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ─────────────────────────────────────────────
+    // 메인 앱
+    // ─────────────────────────────────────────────
+    function App() {
+      const [combos,   setCombos]   = useState(null);
+      const [animKey,  setAnimKey]  = useState(0);
+      const [loading,  setLoading]  = useState(false);
+      const [tab,      setTab]      = useState("numbers"); // "numbers" | "stats"
+      const [lastGen,  setLastGen]  = useState(null);
+
+      const generate = useCallback(() => {
+        setLoading(true);
+        setTimeout(() => {
+          setCombos(generateNumbers());
+          setAnimKey(k=>k+1);
+          setLastGen(new Date());
+          setLoading(false);
+        }, 600);
+      }, []);
+
+      useEffect(() => { generate(); }, []);
+
+      const now = lastGen ? lastGen.toLocaleString("ko-KR",{
+        month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit"
+      }) : "";
+
+      return (
+        <div style={{
+          minHeight:"100vh",
+          background:"linear-gradient(160deg,#080d1a 0%,#0d1528 50%,#080d1a 100%)",
+          paddingBottom:60,
+        }}>
+
+          {/* ── 헤더 ── */}
+          <div style={{
+            background:"linear-gradient(90deg,#0a1020,#111827,#0a1020)",
+            borderBottom:"1px solid #1a2537",
+            padding:"16px 16px 12px",
+            position:"sticky", top:0, zIndex:20,
+            backdropFilter:"blur(12px)",
+          }}>
+            <div style={{ maxWidth:520, margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{
+                  background:"linear-gradient(135deg,#f7c948,#f0873c)",
+                  borderRadius:10, width:38, height:38,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:20, boxShadow:"0 3px 12px #f7c94855",
+                }}>🎱</div>
+                <div>
+                  <div style={{ fontSize:17, fontWeight:900, color:"#f1f5f9", letterSpacing:-0.3 }}>
+                    로또 AI 분석기
+                  </div>
+                  <div style={{ fontSize:10, color:"#374151", marginTop:1 }}>
+                    1~1220회 누적 · 5가지 전략 조합
+                  </div>
+                </div>
+              </div>
+              {/* 탭 버튼 */}
+              <div style={{ display:"flex", gap:4 }}>
+                {[["numbers","🎯 번호"],["stats","📊 통계"]].map(([key,label])=>(
+                  <button key={key} onClick={()=>setTab(key)} style={{
+                    background: tab===key ? "#1e2d44" : "transparent",
+                    border:`1px solid ${tab===key?"#2d4a6a":"#1a2537"}`,
+                    borderRadius:8, padding:"5px 11px",
+                    color: tab===key ? "#7dd3fc" : "#475569",
+                    fontSize:11, fontWeight:600, cursor:"pointer",
+                  }}>{label}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ maxWidth:520, margin:"0 auto", padding:"0 14px" }}>
+
+            {/* ── 생성 버튼 ── */}
+            {tab==="numbers" && (
+              <div style={{ padding:"18px 0 14px" }}>
+                <button onClick={generate} disabled={loading} style={{
+                  width:"100%",
+                  background: loading
+                    ? "linear-gradient(135deg,#1a2437,#1e2c40)"
+                    : "linear-gradient(135deg,#f7c948 0%,#f08c3c 50%,#e85d5d 100%)",
+                  border:"none", borderRadius:14, padding:"15px",
+                  color: loading ? "#374151" : "#111",
+                  fontSize:16, fontWeight:900, cursor: loading?"not-allowed":"pointer",
+                  boxShadow: loading ? "none" : "0 4px 24px #f7c94855",
+                  animation: loading ? "none" : "pulse 2s ease-in-out infinite",
+                  display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+                  transition:"all 0.3s ease",
+                }}>
+                  {loading
+                    ? <><span style={{display:"inline-block",animation:"spin 0.8s linear infinite",fontSize:18}}>⟳</span> 분석 중...</>
+                    : <>🎯 이번 주 번호 생성</>
+                  }
+                </button>
+                {lastGen && !loading && (
+                  <div style={{ textAlign:"center", fontSize:10, color:"#1e2d44", marginTop:7 }}>
+                    최근 생성: {now}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── 번호 탭 ── */}
+            {tab==="numbers" && combos && (
+              <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                {["A","B","C","D","E"].map(id=>(
+                  <ComboCard key={id} id={id} nums={combos[id]} animKey={`${animKey}-${id}`} />
+                ))}
+                <div style={{
+                  marginTop:8, padding:"12px 14px",
+                  background:"#080d17", borderRadius:10,
+                  border:"1px solid #121a28", textAlign:"center",
+                }}>
+                  <div style={{ fontSize:10, color:"#1e2d3d", lineHeight:1.9 }}>
+                    ⚠️ 로또는 완전한 독립시행 확률 게임입니다<br/>
+                    통계 분석은 참고용이며 당첨을 보장하지 않습니다
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── 통계 탭 ── */}
+            {tab==="stats" && (
+              <div style={{ paddingTop:18, display:"flex", flexDirection:"column", gap:14 }}>
+                <StatPanel />
+                <PatternPanel />
+                {/* 볼 색상 범례 */}
+                <div style={{
+                  background:"#0f1420", border:"1px solid #1a2537",
+                  borderRadius:12, padding:"14px 16px",
+                }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#475569", marginBottom:10 }}>
+                    🎨 공 색상 범례
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                    {[
+                      {range:"1 ~ 10", bg:"#f7c948", text:"#1a1a1a", shadow:"#c9960a", label:"노랑"},
+                      {range:"11 ~ 20",bg:"#4f9cf9", text:"#fff",    shadow:"#1a5cbf", label:"파랑"},
+                      {range:"21 ~ 30",bg:"#f05252", text:"#fff",    shadow:"#b01c1c", label:"빨강"},
+                      {range:"31 ~ 40",bg:"#8b96a8", text:"#fff",    shadow:"#4a5568", label:"회색"},
+                      {range:"41 ~ 45",bg:"#4cba6e", text:"#fff",    shadow:"#1d7a3e", label:"초록"},
+                    ].map(r=>(
+                      <div key={r.range} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <div style={{
+                          width:30, height:30, borderRadius:"50%",
+                          background:`radial-gradient(circle at 35% 35%,${r.bg}ee,${r.shadow})`,
+                          color:r.text, fontWeight:800, fontSize:9,
+                          display:"flex", alignItems:"center", justifyContent:"center",
+                          boxShadow:`0 2px 6px ${r.shadow}66`, flexShrink:0,
+                        }}>{r.label}</div>
+                        <div style={{ fontSize:12, color:"#64748b" }}>{r.range}번</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
